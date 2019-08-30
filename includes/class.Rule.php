@@ -97,65 +97,15 @@ class Rule {
         }
     }
 
-
-    function getOriginSiteIds(){
-        return $this->_getSiteIds($this->origin->site_ids);        
-    }
-
-    function getDestinationSiteIds(){
-        return $this->_getSiteIds($this->destination->site_ids);        
-    }
-
-    static $inside_sync_post = false;
-
     /**
-     * Syncronize the post
+     * Prepare and return an array with metadata to be synced
      *
-     * @todo sync attachments
-     * 
-     * @param int $post_id
-     * @return void
+     * @param integer $post_id
+     * @return array
      */
-    function sync_post($post_id, $post, $update){
-        if(self::$inside_sync_post){
-            return;
-        }
-        // don't sync revisions
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) {
-            return;
-        }
-
-        if (wp_is_post_revision($post_id)) {
-            return;
-        }
-
-        if (wp_is_post_autosave($post_id)) {
-            return;
-        }
-
-        // if new post
-        if (!$update) {
-            return;
-        }
-
-        
+    function prepare_metadata(int $post_id){
         $dest = $this->destination;
-        
-        // verify if the post is eligible to be synced
-        if(!$this->is_eligible($post)){
-            return;
-        }
-        
-        global $wpdb;
-        
-        self::$inside_sync_post = true;
 
-        // metadata that represents the relation between original post and their copies
-        $relation_meta_key = 'SYNC:origin';
-        $relation_meta_value = $this->current_blog_id . ':' . $post_id;
-        
-
-        // prepare an array with metadata to be synced
         $metadata = [];
 
         // get origin post metadata
@@ -181,8 +131,19 @@ class Rule {
             unset($metadata[$key]);
         }
 
+        return $metadata;
+    }
 
-        // prepare an array with terms to be synced
+    /**
+     * Prepare and returns an array with terms to be synced
+     * 
+     * @var integer $post_id
+     * 
+     * @return array
+     */
+    function prepare_taxonomy_terms(int $post_id){
+        $dest = $this->destination;
+        
         $taxonomy_terms = [];
 
         // includes the terms of origin post
@@ -214,73 +175,153 @@ class Rule {
             }
         }
 
+        return $taxonomy_terms;
+    }
+
+    function getOriginSiteIds(){
+        return $this->_getSiteIds($this->origin->site_ids);        
+    }
+
+    function getDestinationSiteIds(){
+        return $this->_getSiteIds($this->destination->site_ids);        
+    }
+
+    static $inside_sync_post = false;
+
+    /**
+     * Syncronize the post
+     *
+     * @todo sync attachments
+     * 
+     * @param int $post_id
+     * @return void
+     */
+    function sync_post($post_id, $post, $update){
+        // to prevent loop
+        if(self::$inside_sync_post){
+            return;
+        }
+
+        // don't sync revisions
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) {
+            return;
+        }
+        if (wp_is_post_revision($post_id)) {
+            return;
+        }
+        if (wp_is_post_autosave($post_id)) {
+            return;
+        }
+
+        // if new post
+        if (!$update) {
+            return;
+        }
+        
+        // verify if the post is eligible to be synced
+        if(!$this->is_eligible($post)){
+            return;
+        }
+        
+        // to prevent loop
+        self::$inside_sync_post = true;
+        
+        // metadata to be synced
+        $metadata = $this->prepare_metadata($post_id);
+
+        // terms to be synced
+        $taxonomy_terms = $this->prepare_taxonomy_terms($post_id);
+
+        // ids of the destination sites
         $site_ids = $this->getDestinationSiteIds();
 
         foreach($site_ids as $site_id){
             if($site_id == $this->current_blog_id){
                 continue;
             }
-            
-            switch_to_blog($site_id);
 
-            $_post = clone $post;
-            foreach(['ID', 'guid', 'post_date', 'post_date_gmt', 'post_modified', 'post_'] as $prop){
-                unset($_post->$prop);
-            }
-
-            $destination_id = $wpdb->get_var("
-                SELECT post_id 
-                FROM $wpdb->postmeta 
-                WHERE meta_key = '$relation_meta_key' AND 
-                      meta_value = '$relation_meta_value'");
-            
-                      
-            if($destination_id){
-                $new_post = false;
-                if($dest->publish_updates){
-                    $_post->ID = $destination_id;
-                    $_post->post_status = 'publish';
-                } else {
-                    $old_autosave = wp_get_post_autosave( $destination_id );
-                    if($old_autosave){
-                        wp_delete_post_revision($old_autosave->ID);
-                    }
-                    $_post->ID = $destination_id;
-                    $_post = (object) _wp_post_revision_data((array) $_post, true);                    
-                }
-            } else {
-                $new_post = true;
-                $_post->post_status = $dest->new_post_status;
-            }
-            
-            if($new_post){
-                $destination_id = wp_insert_post($_post);
-                $_post->ID = $destination_id;    
-                add_post_meta($destination_id, $relation_meta_key, $relation_meta_value);
-            } else {
-                if($_post->ID){
-                    wp_update_post($_post);
-                } else {
-                    $_post->ID = wp_insert_post($_post);
-                }
-            }
-
-            foreach($taxonomy_terms as $taxonomy => $terms){
-                wp_set_object_terms($destination_id, $terms, $taxonomy);
-            }
-
-
-            foreach($metadata as $meta_key => $meta_values){
-                delete_post_meta($destination_id, $meta_key);
-                foreach($meta_values as $value){
-                    add_post_meta($destination_id, $meta_key, $value);
-                }
-            }
-            
+            // synchronize the post to site
+            $this->sync_post_to_site($site_id, $post, $metadata, $taxonomy_terms);
         }
 
+        // to prevent loop
+        self::$inside_sync_post = false;
+    }
+
+    /**
+     * Synchronizes the post to site
+     *
+     * @param int $site_id
+     * @param object $post
+     * @param array $metadata
+     * @param array $taxonomy_terms
+     * 
+     * @return integer id of the synchronized post 
+     */
+    protected function sync_post_to_site(int $site_id, $post, array $metadata, array $taxonomy_terms){
+        global $wpdb;
+        $dest = $this->destination;
+        
+        // metadata that represents the relation between original post and their copies
+        $relation_meta_key = 'SYNC:origin';
+        $relation_meta_value = $this->current_blog_id . ':' . $post->ID;
+        switch_to_blog($site_id);
+
+        $_post = clone $post;
+        foreach(['ID', 'guid', 'post_date', 'post_date_gmt', 'post_modified', 'post_'] as $prop){
+            unset($_post->$prop);
+        }
+
+        $destination_id = $wpdb->get_var("
+            SELECT post_id 
+            FROM $wpdb->postmeta 
+            WHERE meta_key = '$relation_meta_key' AND 
+                  meta_value = '$relation_meta_value'");
+        
+                  
+        if($destination_id){
+            $new_post = false;
+            if($dest->publish_updates){
+                $_post->ID = $destination_id;
+                $_post->post_status = 'publish';
+            } else {
+                $old_autosave = wp_get_post_autosave( $destination_id );
+                if($old_autosave){
+                    wp_delete_post_revision($old_autosave->ID);
+                }
+                $_post->ID = $destination_id;
+                $_post = (object) _wp_post_revision_data((array) $_post, true);                    
+            }
+        } else {
+            $new_post = true;
+            $_post->post_status = $dest->new_post_status;
+        }
+        
+        if($new_post){
+            $destination_id = wp_insert_post($_post);
+            $_post->ID = $destination_id;    
+            add_post_meta($destination_id, $relation_meta_key, $relation_meta_value);
+        } else {
+            if($_post->ID){
+                wp_update_post($_post);
+            } else {
+                $_post->ID = wp_insert_post($_post);
+            }
+        }
+
+        foreach($taxonomy_terms as $taxonomy => $terms){
+            wp_set_object_terms($destination_id, $terms, $taxonomy);
+        }
+
+        foreach($metadata as $meta_key => $meta_values){
+            delete_post_meta($destination_id, $meta_key);
+            foreach($meta_values as $value){
+                add_post_meta($destination_id, $meta_key, $value);
+            }
+        }
+        
         switch_to_blog($this->current_blog_id);
 
-        self::$inside_sync_post = false;
+        return $_post->ID;
     }
 }
