@@ -1,14 +1,18 @@
 <?php
+
 namespace hl\mssync;
 
-if ( ! defined( 'ABSPATH' ) ) {
-    exit( 'restricted access' );
+if (!defined('ABSPATH')) {
+    exit('restricted access');
 }
 
 /**
  * Synchronization Rule Class
  */
-class Rule {
+class Rule
+{
+    static $inside_sync_post = false;
+
     static $updated_posts = [];
 
     /**
@@ -28,7 +32,6 @@ class Rule {
     public $current_blog_id;
 
     function __construct(Origin $origin, Destination $destination) {
-        
         $this->origin = clone $origin;
         $this->destination = clone $destination;
 
@@ -43,57 +46,59 @@ class Rule {
      * @param \WP_Post $post
      * @return boolean
      */
-    protected function is_eligible($post){
+    protected function is_eligible($post) {
         $origin = $this->origin;
 
         // verify if the current blog id is in the list of sites that must be synced
-        if(!in_array($this->current_blog_id, $this->getOriginSiteIds())){
+        if (!in_array($this->current_blog_id, $this->getOriginSiteIds())) {
             return false;
         }
 
         // verify if the post type is in the list of post types that must be synced
-        if(!in_array($post->post_type, $origin->post_types)){
+        if (!in_array($post->post_type, $origin->post_types)) {
             return false;
         }
 
         // verify if the post_status is in the list of post statuses that must be synced
-        if(!in_array($post->post_status, $origin->post_status)){
+        if (!in_array($post->post_status, $origin->post_status)) {
             return false;
         }
 
         // verify if the post author is in the list of post authors that must be synced
-        if($origin->post_author && !in_array($post->post_author, $origin->post_author)){
+        if ($origin->post_author && !in_array($post->post_author, $origin->post_author)) {
             return false;
         }
 
         // verify if the post has at last one term for each configured taxonomy terms
         $has_term = true;
-        foreach($origin->terms as $taxonomy => $terms){
-            if(!has_term($terms, $taxonomy)){
+        foreach ($origin->terms as $taxonomy => $terms) {
+            if (!has_term($terms, $taxonomy)) {
                 $has_term = false;
             }
         }
-        if(!$has_term){
+        if (!$has_term) {
             return false;
         }
 
         return true;
     }
 
-    protected function _getSiteIds($config){
-        if(is_array($config)){
+    protected function _getSiteIds($config) {
+        if (is_array($config)) {
             return $config;
-        } else if (is_callable($config)){
+        } else if (is_callable($config)) {
             $sites = [];
-            foreach(get_sites() as $site){
-                if($config($site->blog_id)){
+            foreach (get_sites() as $site) {
+                if ($config($site->blog_id)) {
                     $sites[] = $site->blog_id;
                 }
             }
 
             return $sites;
         } else {
-            return array_map(function($site) { return $site->blog_id; }, get_sites());
+            return array_map(function ($site) {
+                return $site->blog_id;
+            }, get_sites());
         }
     }
 
@@ -103,23 +108,23 @@ class Rule {
      * @param integer $post_id
      * @return array
      */
-    function prepare_metadata(int $post_id){
+    function prepare_metadata(int $post_id) {
         $dest = $this->destination;
 
         $metadata = [];
 
         // get origin post metadata
-        if($dest->sync_metadata){
+        if ($dest->sync_metadata) {
             $metadata = get_post_meta($post_id);
         }
 
         // includes the metadata of add_metadata configuration
-        foreach($dest->add_metadata as $key => $values){
-            if(!is_array($values)){
+        foreach ($dest->add_metadata as $key => $values) {
+            if (!is_array($values)) {
                 $values = [$values];
             }
 
-            if(isset($metadata[$key])){
+            if (isset($metadata[$key])) {
                 $metadata[$key] = array_merge($metadata[$key], $values);
             } else {
                 $metadata[$key] = $values;
@@ -127,7 +132,7 @@ class Rule {
         }
 
         // removes metadata of remove_metadata configuration
-        foreach($dest->remove_metadata as $key){
+        foreach ($dest->remove_metadata as $key) {
             unset($metadata[$key]);
         }
 
@@ -141,23 +146,25 @@ class Rule {
      * 
      * @return array
      */
-    function prepare_taxonomy_terms(int $post_id){
+    function prepare_taxonomy_terms(int $post_id) {
         $dest = $this->destination;
-        
+
         $taxonomy_terms = [];
 
         // includes the terms of origin post
-        foreach($dest->sync_terms as $taxonomy){
+        foreach ($dest->sync_terms as $taxonomy) {
             $terms = get_the_terms($post_id, $taxonomy);
-            
-            if(is_array($terms)){
-                $taxonomy_terms[$taxonomy] = array_map(function($term){ return $term->name; }, $terms);
+
+            if (is_array($terms)) {
+                $taxonomy_terms[$taxonomy] = array_map(function ($term) {
+                    return $term->name;
+                }, $terms);
             }
         }
 
         // includes the terms of the add_terms configuration
-        foreach($dest->add_terms as $taxonomy => $terms){
-            if(isset($taxonomy_terms[$taxonomy])){
+        foreach ($dest->add_terms as $taxonomy => $terms) {
+            if (isset($taxonomy_terms[$taxonomy])) {
                 $taxonomy_terms[$taxonomy] = array_unique(array_merge($terms, $taxonomy_terms[$taxonomy]));
             } else {
                 $taxonomy_terms[$taxonomy] = $terms;
@@ -165,10 +172,10 @@ class Rule {
         }
 
         // removes the terms of the remove_terms configuration
-        foreach($dest->remove_terms as $taxonomy => $terms_to_remove){
-            if(isset($taxonomy_terms[$taxonomy])){
-                $taxonomy_terms[$taxonomy] = array_filter($taxonomy_terms[$taxonomy], function($term) use($terms_to_remove){
-                    if(!in_array($term, $terms_to_remove)){
+        foreach ($dest->remove_terms as $taxonomy => $terms_to_remove) {
+            if (isset($taxonomy_terms[$taxonomy])) {
+                $taxonomy_terms[$taxonomy] = array_filter($taxonomy_terms[$taxonomy], function ($term) use ($terms_to_remove) {
+                    if (!in_array($term, $terms_to_remove)) {
                         return $term;
                     }
                 });
@@ -178,15 +185,13 @@ class Rule {
         return $taxonomy_terms;
     }
 
-    function getOriginSiteIds(){
-        return $this->_getSiteIds($this->origin->site_ids);        
+    function getOriginSiteIds() {
+        return $this->_getSiteIds($this->origin->site_ids);
     }
 
-    function getDestinationSiteIds(){
-        return $this->_getSiteIds($this->destination->site_ids);        
+    function getDestinationSiteIds() {
+        return $this->_getSiteIds($this->destination->site_ids);
     }
-
-    static $inside_sync_post = false;
 
     /**
      * Syncronize the post
@@ -196,14 +201,14 @@ class Rule {
      * @param int $post_id
      * @return void
      */
-    function sync_post($post_id, $post, $update){
+    function sync_post($post_id, $post, $update) {
         // to prevent loop
-        if(self::$inside_sync_post){
+        if (self::$inside_sync_post) {
             return;
         }
 
         // don't sync revisions
-        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) {
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
             return;
         }
         if (wp_is_post_revision($post_id)) {
@@ -217,15 +222,15 @@ class Rule {
         if (!$update) {
             return;
         }
-        
+
         // verify if the post is eligible to be synced
-        if(!$this->is_eligible($post)){
+        if (!$this->is_eligible($post)) {
             return;
         }
-        
-        // to prevent loop
+
+        // to prevent recursions
         self::$inside_sync_post = true;
-        
+
         // metadata to be synced
         $metadata = $this->prepare_metadata($post_id);
 
@@ -235,8 +240,8 @@ class Rule {
         // ids of the destination sites
         $site_ids = $this->getDestinationSiteIds();
 
-        foreach($site_ids as $site_id){
-            if($site_id == $this->current_blog_id){
+        foreach ($site_ids as $site_id) {
+            if ($site_id == $this->current_blog_id) {
                 continue;
             }
 
@@ -258,8 +263,8 @@ class Rule {
      * 
      * @return integer id of the synchronized post 
      */
-    protected function sync_post_to_site(int $site_id, $post, array $metadata, array $taxonomy_terms){
         global $wpdb;
+    protected function sync_post_to_site(int $site_id, $post, array $metadata, array $taxonomy_terms) {
         $dest = $this->destination;
         
         // metadata that represents the relation between original post and their copies
@@ -279,47 +284,47 @@ class Rule {
                   meta_value = '$relation_meta_value'");
         
                   
-        if($destination_id){
+        if ($destination_id) {
             $new_post = false;
-            if($dest->publish_updates){
+            if ($dest->publish_updates) {
                 $_post->ID = $destination_id;
                 $_post->post_status = 'publish';
             } else {
-                $old_autosave = wp_get_post_autosave( $destination_id );
-                if($old_autosave){
+                $old_autosave = wp_get_post_autosave($destination_id);
+                if ($old_autosave) {
                     wp_delete_post_revision($old_autosave->ID);
                 }
                 $_post->ID = $destination_id;
-                $_post = (object) _wp_post_revision_data((array) $_post, true);                    
+                $_post = (object) _wp_post_revision_data((array) $_post, true);
             }
         } else {
             $new_post = true;
             $_post->post_status = $dest->new_post_status;
         }
-        
-        if($new_post){
+
+        if ($new_post) {
             $destination_id = wp_insert_post($_post);
             $_post->ID = $destination_id;    
             add_post_meta($destination_id, $relation_meta_key, $relation_meta_value);
         } else {
-            if($_post->ID){
+            if ($_post->ID) {
                 wp_update_post($_post);
             } else {
                 $_post->ID = wp_insert_post($_post);
             }
         }
 
-        foreach($taxonomy_terms as $taxonomy => $terms){
+        foreach ($taxonomy_terms as $taxonomy => $terms) {
             wp_set_object_terms($destination_id, $terms, $taxonomy);
         }
 
         foreach($metadata as $meta_key => $meta_values){
             delete_post_meta($destination_id, $meta_key);
-            foreach($meta_values as $value){
+            foreach ($meta_values as $value) {
                 add_post_meta($destination_id, $meta_key, $value);
             }
         }
-        
+
         switch_to_blog($this->current_blog_id);
 
         return $_post->ID;
