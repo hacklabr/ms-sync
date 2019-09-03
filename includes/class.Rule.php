@@ -253,6 +253,42 @@ class Rule
         self::$inside_sync_post = false;
     }
 
+    function get_post_copy_id($destination_site_id, $origin_site_id, $origin_post_id) {
+        global $wpdb;
+
+        // metadata that represents the relation between original post and their copies
+        $relation_meta_key = 'SYNC:origin';
+        $relation_meta_value = "$origin_site_id:$origin_post_id";
+
+        $current_blog_id = get_current_blog_id();
+
+        switch_to_blog($destination_site_id);
+
+        $destination_id = $wpdb->get_var("
+            SELECT post_id 
+            FROM $wpdb->postmeta 
+            WHERE meta_key = '$relation_meta_key' AND 
+            meta_value = '$relation_meta_value'");
+
+        switch_to_blog($current_blog_id);
+
+        return $destination_id;
+    }
+
+    function save_post_copy_id($destination_site_id, $destination_post_id, $origin_site_id, $origin_post_id) {
+        // metadata that represents the relation between original post and their copies
+        $relation_meta_key = 'SYNC:origin';
+        $relation_meta_value = "$origin_site_id:$origin_post_id";
+
+        $current_blog_id = get_current_blog_id();
+
+        switch_to_blog($destination_site_id);
+
+        add_post_meta($destination_post_id, $relation_meta_key, $relation_meta_value);
+
+        switch_to_blog($current_blog_id);
+    }
+
     /**
      * Synchronizes the post to site
      *
@@ -263,27 +299,18 @@ class Rule
      * 
      * @return integer id of the synchronized post 
      */
-        global $wpdb;
     protected function sync_post_to_site(int $site_id, $post, array $metadata, array $taxonomy_terms) {
         $dest = $this->destination;
-        
-        // metadata that represents the relation between original post and their copies
-        $relation_meta_key = 'SYNC:origin';
-        $relation_meta_value = $this->current_blog_id . ':' . $post->ID;
-        switch_to_blog($site_id);
 
         $_post = clone $post;
-        foreach(['ID', 'guid', 'post_date', 'post_date_gmt', 'post_modified', 'post_'] as $prop){
+        foreach (['ID', 'guid', 'post_date', 'post_date_gmt', 'post_modified', 'post_modified_gmt'] as $prop) {
             unset($_post->$prop);
         }
 
-        $destination_id = $wpdb->get_var("
-            SELECT post_id 
-            FROM $wpdb->postmeta 
-            WHERE meta_key = '$relation_meta_key' AND 
-                  meta_value = '$relation_meta_value'");
-        
-                  
+        $destination_id = $this->get_post_copy_id($site_id, $this->current_blog_id, $post->ID);
+
+        switch_to_blog($site_id);
+
         if ($destination_id) {
             $new_post = false;
             if ($dest->publish_updates) {
@@ -304,8 +331,8 @@ class Rule
 
         if ($new_post) {
             $destination_id = wp_insert_post($_post);
-            $_post->ID = $destination_id;    
-            add_post_meta($destination_id, $relation_meta_key, $relation_meta_value);
+            $_post->ID = $destination_id;
+            $this->save_post_copy_id($site_id, $destination_id, $this->current_blog_id, $post->ID);
         } else {
             if ($_post->ID) {
                 wp_update_post($_post);
@@ -318,7 +345,7 @@ class Rule
             wp_set_object_terms($destination_id, $terms, $taxonomy);
         }
 
-        foreach($metadata as $meta_key => $meta_values){
+        foreach ($metadata as $meta_key => $meta_values) {
             delete_post_meta($destination_id, $meta_key);
             foreach ($meta_values as $value) {
                 add_post_meta($destination_id, $meta_key, $value);
@@ -327,6 +354,78 @@ class Rule
 
         switch_to_blog($this->current_blog_id);
 
+        $attachments = get_posts(['post_type' => 'attachment', 'post_parent' => $post->ID, 'posts_per_page' => -1]);
+
+        foreach ($attachments as $attachment) {
+            $this->_sync_post_attachment($site_id, $attachment, $_post->ID);
+        }
+
         return $_post->ID;
+    }
+
+    protected function _sync_post_attachment($site_id, $attachment, $parent_post_id) {
+        $parent_featured_image_id = get_post_meta($attachment->post_parent, '_thumbnail_id', true);
+        $is_featured_image = $parent_featured_image_id == $attachment->ID;
+        
+        $original_attachment_id = $attachment->ID;
+        $metadata = get_post_meta($original_attachment_id);
+        $filename_path = get_attached_file($original_attachment_id);
+
+        $attachment_id = $this->get_post_copy_id($site_id, $this->current_blog_id, $original_attachment_id);
+
+        $new_post = !$attachment_id;
+
+        switch_to_blog($site_id);
+
+        $attachment = clone $attachment;
+        foreach (['ID', 'guid', 'post_date', 'post_date_gmt', 'post_modified', 'post_modified_gmt'] as $prop) {
+            unset($attachment->$prop);
+        }
+
+        $attachment->post_parent = $parent_post_id;
+
+        if ($new_post) {
+            $upload_dir = wp_upload_dir();
+            $filename = basename($filename_path);
+
+            if (wp_mkdir_p($upload_dir['path'])) {
+                $file = $upload_dir['path'] . '/' . $filename;
+            } else {
+                $file = $upload_dir['basedir'] . '/' . $filename;
+            }
+
+            if (defined('MS_SYNC_USE_HARD_LINK')) {
+                link($filename_path, $file);
+            } else {
+                copy($filename_path, $file);
+            }
+
+            $attachment_id = wp_insert_attachment($attachment, $file);
+            require_once(ABSPATH . 'wp-admin/includes/image.php');
+            $attach_data = wp_generate_attachment_metadata($attachment_id, $file);
+            wp_update_attachment_metadata($attachment_id, $attach_data);
+
+            $this->save_post_copy_id($site_id, $attachment_id, $this->current_blog_id, $original_attachment_id);
+        } else {
+            $attachment->ID = $attachment_id;
+            wp_update_post($attachment);
+        }
+
+        if (is_numeric($attachment_id) && $attachment_id > 0) {
+            $attachment->ID = $attachment_id;
+            foreach ($metadata as $meta_key => $meta_values) {
+                delete_post_meta($attachment_id, $meta_key);
+                foreach ($meta_values as $value) {
+                    add_post_meta($attachment_id, $meta_key, $value);
+                }
+            }
+        }
+
+        // define attachment as featured image
+        if ($is_featured_image) {
+            update_post_meta($parent_post_id, '_thumbnail_id', $attachment_id);
+        }
+
+        switch_to_blog($this->current_blog_id);
     }
 }
