@@ -355,7 +355,11 @@ class Rule
         switch_to_blog($this->current_blog_id);
 
         $attachments = get_posts(['post_type' => 'attachment', 'post_parent' => $post->ID, 'posts_per_page' => -1]);
-
+        if($thumb_id = get_post_thumbnail_id($post->ID)){
+            $attachment = get_post($thumb_id);
+            $attachment->post_parent = $post->ID;
+            $attachments[] = $attachment;
+        }
         foreach ($attachments as $attachment) {
             $this->_sync_post_attachment($site_id, $attachment, $_post->ID);
         }
