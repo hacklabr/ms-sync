@@ -69,6 +69,11 @@ class Destination {
      * @var boolean
      */
     public $sync_attachments;
+
+    /**
+     * @var boolean|callable
+     */
+    public $mapping_fn;
     
     function __construct($args) {
         $args += [
@@ -83,7 +88,8 @@ class Destination {
             'publish_updates' => false,  // by default will be created an auto draft
             'sync_terms' => [ 'category', 'post_tag' ],
             'sync_metadata' => true,
-            'sync_attachments' => true
+            'sync_attachments' => true,
+            'mapping_fn' => false
         ];
 
         foreach($args as $key => $val){

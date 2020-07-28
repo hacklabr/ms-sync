@@ -37,7 +37,7 @@ class Rule
 
         $this->current_blog_id = get_current_blog_id();
 
-        add_action('save_post', [$this, 'sync_post'], 0, 3);
+        add_action('save_post', [$this, 'sync_post'], 1000, 3);
     }
 
     /**
@@ -328,7 +328,9 @@ class Rule
             $new_post = true;
             $_post->post_status = $dest->new_post_status;
         }
-
+        if(isset($dest->post_type_mapping[$_post->post_type])){
+            $_post->post_type = $dest->post_type_mapping[$_post->post_type];
+        }
         if ($new_post) {
             $destination_id = wp_insert_post($_post);
             $_post->ID = $destination_id;
@@ -351,7 +353,11 @@ class Rule
                 add_post_meta($destination_id, $meta_key, $value);
             }
         }
-
+              
+        if(isset($dest->mapping_fn) && $dest->mapping_fn){
+            call_user_func($dest->mapping_fn, $post, $_post);
+        }
+        
         switch_to_blog($this->current_blog_id);
 
         $attachments = get_posts(['post_type' => 'attachment', 'post_parent' => $post->ID, 'posts_per_page' => -1]);
@@ -363,7 +369,6 @@ class Rule
         foreach ($attachments as $attachment) {
             $this->_sync_post_attachment($site_id, $attachment, $_post->ID);
         }
-
         return $_post->ID;
     }
 
