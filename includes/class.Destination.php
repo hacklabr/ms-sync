@@ -94,6 +94,6 @@ class Destination {
 
         foreach($args as $key => $val){
             $this->$key = $val;
-        }
+        } 
     }
 }

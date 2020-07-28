@@ -355,7 +355,7 @@ class Rule
         }
               
         if(isset($dest->mapping_fn) && $dest->mapping_fn){
-            call_user_func($dest->mapping_fn, $post, $_post);
+            call_user_func($dest->mapping_fn, $post, $_post); 
         }
         
         switch_to_blog($this->current_blog_id);
