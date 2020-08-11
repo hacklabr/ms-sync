@@ -403,6 +403,10 @@ class Rule
                 $file = $upload_dir['basedir'] . '/' . $filename;
             }
 
+            if (!is_dir(dirname($file))) {
+                mkdir(dirname($file));
+            }
+
             if (defined('MS_SYNC_USE_HARD_LINK')) {
                 link($filename_path, $file);
             } else {
